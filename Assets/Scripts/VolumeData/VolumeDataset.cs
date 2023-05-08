@@ -40,9 +40,13 @@ namespace UnityVolumeRendering
 
         private Texture3D dataTexture = null;
         private Texture3D gradientTexture = null;
+        private RenderTexture denoisedTexture = null;
+        private RenderTexture denoisedGradientTexture = null;
 
         private SemaphoreSlim createDataTextureLock = new SemaphoreSlim(1, 1);
         private SemaphoreSlim createGradientTextureLock = new SemaphoreSlim(1, 1);
+
+        private ComputeShader ComputeDenoiser;
 
         public Texture3D GetDataTexture()
         {
@@ -360,5 +364,64 @@ namespace UnityVolumeRendering
         {
             return data[x + y * dimX + z * (dimX * dimY)];
         }
+
+        public RenderTexture GetDenoisedTexture(float sigmaSpace=1, float sigmaRange = 50, bool update = false)
+        {
+            if (denoisedTexture != null && update == false) return denoisedTexture;
+            if (denoisedTexture == null)
+            {
+                RenderTextureFormat texformat = SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RHalf) ? RenderTextureFormat.RHalf : RenderTextureFormat.RFloat;
+                denoisedTexture = new RenderTexture(dimX, dimY, 0, texformat);
+                denoisedTexture.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
+                denoisedTexture.volumeDepth = dimZ;
+                denoisedTexture.useMipMap = false;
+                denoisedTexture.wrapMode = TextureWrapMode.Clamp;
+                denoisedTexture.enableRandomWrite = true;
+                denoisedTexture.name = "denoisedTex";
+                denoisedTexture.Create();
+            }
+
+            if (ComputeDenoiser == null) ComputeDenoiser = Resources.Load<ComputeShader>("ComputerDenoiser");
+            int kernelBilateral = ComputeDenoiser.FindKernel("VolumeBilateralFilter");
+            ComputeDenoiser.SetTexture(kernelBilateral,"_DataTex", dataTexture);
+            ComputeDenoiser.SetTexture(kernelBilateral, "_OutputTex", denoisedTexture);
+            ComputeDenoiser.SetFloat("_KernelSize", 5);
+            ComputeDenoiser.SetFloat("_SigmaSpace", sigmaSpace);
+            ComputeDenoiser.SetFloat("_SigmaRange", sigmaRange);
+
+            ComputeDenoiser.Dispatch(kernelBilateral,Mathf.CeilToInt(dimX / 8.0f), Mathf.CeilToInt(dimX / 8.0f) , Mathf.CeilToInt(dimX / 8.0f));
+            Debug.Log("Denoise Done");
+            return denoisedTexture;
+        }
+        public RenderTexture GetDenoisedGradientTexture(float sigmaSpace = 1, float sigmaRange = 50, bool update = false)
+        {
+            if (denoisedGradientTexture != null && update == false) return denoisedGradientTexture;
+            if (denoisedGradientTexture == null)
+            {
+                RenderTextureFormat texformat = SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBHalf) ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
+                denoisedGradientTexture = new RenderTexture(dimX, dimY, 0, texformat);
+                denoisedGradientTexture.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
+                denoisedGradientTexture.volumeDepth = dimZ;
+                denoisedGradientTexture.useMipMap = false;
+                denoisedGradientTexture.wrapMode = TextureWrapMode.Clamp;
+                denoisedGradientTexture.enableRandomWrite = true;
+                denoisedGradientTexture.name = "denoisedGradientTex";
+                denoisedGradientTexture.Create();
+            }
+
+            if (ComputeDenoiser == null) ComputeDenoiser = Resources.Load<ComputeShader>("ComputerDenoiser");
+            int kernelBilateral = ComputeDenoiser.FindKernel("Volume3DBilateralFilter");
+            ComputeDenoiser.SetTexture(kernelBilateral, "_Data3DTex", gradientTexture);
+            ComputeDenoiser.SetTexture(kernelBilateral, "_Output3DTex", denoisedGradientTexture);
+            ComputeDenoiser.SetFloat("_KernelSize", 5);
+            ComputeDenoiser.SetFloat("_SigmaSpace", sigmaSpace);
+            ComputeDenoiser.SetFloat("_SigmaRange", sigmaRange);
+
+            ComputeDenoiser.Dispatch(kernelBilateral, Mathf.CeilToInt(dimX / 8.0f), Mathf.CeilToInt(dimX / 8.0f), Mathf.CeilToInt(dimX / 8.0f));
+            Debug.Log("Denoise Done");
+            return denoisedGradientTexture;
+        }
+
+
     }
 }

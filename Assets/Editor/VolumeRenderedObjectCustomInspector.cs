@@ -10,6 +10,12 @@ namespace UnityVolumeRendering
         private bool lightSettings = true;
         private bool otherSettings = true;
 
+        private float sigmaRange = 50;
+        private float sigmaSpace = 1;
+
+        private float sigmaRangeGrad = 5;
+        private float sigmaSpaceGrad = 0.5f;
+
         public override void OnInspectorGUI()
         {
             VolumeRenderedObject volrendObj = (VolumeRenderedObject)target;
@@ -79,9 +85,30 @@ namespace UnityVolumeRendering
                     {
                         volrendObj.SetRayTerminationEnabled(GUILayout.Toggle(volrendObj.GetRayTerminationEnabled(), "Enable early ray termination"));
                     }
+                    volrendObj.SetDenoiseEnabled(GUILayout.Toggle(volrendObj.GetDenoiseEnabled(), "Enable volume denoise"));
+                    if (volrendObj.GetDenoiseEnabled())
+                    {
+                        sigmaRange = EditorGUILayout.Slider(sigmaRange,0.01f,500);
+                        sigmaSpace = EditorGUILayout.Slider(sigmaSpace, 0.01f, 10);
+                        if(GUILayout.Button("Update Denoise Param"))
+                        {
+                            volrendObj.UpdateDenoiseValue(sigmaSpace, sigmaRange);
+                        }
+                    }
+                    volrendObj.SetDenoiseGradientEnabled(GUILayout.Toggle(volrendObj.GetDenoiseGradientEnabled(), "Enable volume gradient denoise"));
+                    if (volrendObj.GetDenoiseGradientEnabled())
+                    {
+                        sigmaRangeGrad = EditorGUILayout.Slider(sigmaRangeGrad, 0.01f, 500);
+                        sigmaSpaceGrad = EditorGUILayout.Slider(sigmaSpaceGrad, 0.01f, 10);
+                        if (GUILayout.Button("Update Denoise Gradient Param"))
+                        {
+                            volrendObj.UpdateDenoiseGradValue(sigmaSpaceGrad, sigmaRangeGrad);
+                        }
+                    }
                 }
 
                 volrendObj.SetCubicInterpolationEnabled(GUILayout.Toggle(volrendObj.GetCubicInterpolationEnabled(), "Enable cubic interpolation (better quality)"));
+
             }
         }
     }

@@ -38,6 +38,9 @@ namespace UnityVolumeRendering
         [SerializeField, HideInInspector]
         private bool cubicInterpolationEnabled = false;
 
+        public bool denoiseEnabled = false;
+        public bool denoiseGradientEnabled = false;
+
         private CrossSectionManager crossSectionManager;
 
         private SemaphoreSlim updateMatLock = new SemaphoreSlim(1, 1);
@@ -187,6 +190,44 @@ namespace UnityVolumeRendering
             }
         }
 
+        public bool GetDenoiseEnabled()
+        {
+            return denoiseEnabled;
+        }
+
+        public void SetDenoiseEnabled(bool enable)
+        {
+            if (enable != denoiseEnabled)
+            {
+                denoiseEnabled = enable;
+                UpdateMaterialProperties();
+            }
+        }
+
+        public bool GetDenoiseGradientEnabled()
+        {
+            return denoiseGradientEnabled;
+        }
+
+        public void SetDenoiseGradientEnabled(bool enable)
+        {
+            if (enable != denoiseGradientEnabled)
+            {
+                denoiseGradientEnabled = enable;
+                UpdateMaterialProperties();
+            }
+        }
+        public void UpdateDenoiseValue(float sigmaSpace, float sigmaRange)
+        {
+            //dataset.GetDenoisedTexture(sigmaSpace, sigmaRange, true);
+            meshRenderer.sharedMaterial.SetTexture("_DataTex", dataset.GetDenoisedTexture(sigmaSpace, sigmaRange, true));
+        }
+        public void UpdateDenoiseGradValue(float sigmaSpace, float sigmaRange)
+        {
+            //dataset.GetDenoisedTexture(sigmaSpace, sigmaRange, true);
+            meshRenderer.sharedMaterial.SetTexture("_GradientTex", dataset.GetDenoisedGradientTexture(sigmaSpace, sigmaRange, true));
+        }
+
         public void SetTransferFunction(TransferFunction tf)
         {
             this.transferFunction = tf;
@@ -205,8 +246,29 @@ namespace UnityVolumeRendering
             try
             {
                 bool useGradientTexture = tfRenderMode == TFRenderMode.TF2D || renderMode == RenderMode.IsosurfaceRendering || lightingEnabled;
-                Texture3D texture = useGradientTexture ? await dataset.GetGradientTextureAsync() : null;
-                meshRenderer.sharedMaterial.SetTexture("_GradientTex", texture);
+                //Texture3D texture = useGradientTexture ? await dataset.GetGradientTextureAsync() : null;
+                //meshRenderer.sharedMaterial.SetTexture("_GradientTex", texture);
+                if (useGradientTexture)
+                {
+                    if (denoiseGradientEnabled)
+                    {
+                        meshRenderer.sharedMaterial.SetTexture("_GradientTex", dataset.GetDenoisedGradientTexture());
+                    }
+                    else
+                    {
+                        Texture3D texture =  await dataset.GetGradientTextureAsync() ;
+                        meshRenderer.sharedMaterial.SetTexture("_GradientTex", texture);
+                    }
+                }
+
+                if (denoiseEnabled)
+                {
+                    meshRenderer.sharedMaterial.SetTexture("_DataTex", dataset.GetDenoisedTexture());
+                }
+                else
+                {
+                    meshRenderer.sharedMaterial.SetTexture("_DataTex", dataset.GetDataTexture());
+                }
                 UpdateMatInternal();
             }
             finally

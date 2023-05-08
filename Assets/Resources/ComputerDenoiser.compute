@@ -1,0 +1,87 @@
+﻿#pragma kernel VolumeBilateralFilter
+#pragma kernel Volume3DBilateralFilter
+
+Texture3D<float> _DataTex;
+Texture3D<float3> _Data3DTex;
+
+RWTexture3D<float> _OutputTex;
+RWTexture3D<float3> _Output3DTex;
+
+int _KernelSize;
+float _SigmaSpace ;//squared
+float _SigmaRange ;
+
+[numthreads(8, 8, 8)]
+void VolumeBilateralFilter(uint3 id : SV_DispatchThreadID)
+{
+	const int halfKernelSize = 4;
+	int3 dim;
+	_DataTex.GetDimensions(dim.x,dim.y,dim.z);
+
+	float density = _DataTex[id];
+	float filterdDensity = density;
+	float normalization = 1.0;
+
+	for(int x = -halfKernelSize;x<=halfKernelSize;x++){
+		for(int y = -halfKernelSize;y<=halfKernelSize;y++){
+			for(int z = -halfKernelSize;z<=halfKernelSize;z++){
+				int3 offset = int3(x,y,z);
+				int3 neighborPos = id+ offset;
+				if(any(neighborPos.xyz<0)||any(neighborPos.xyz>=dim.xyz)){
+					continue;
+				}
+				
+				float currDensity = _DataTex[neighborPos];
+				float spaceDist = length(offset);
+				float rangeDist = abs(currDensity-density);
+
+				float spaceWeight = exp(-(spaceDist*spaceDist)/(2*_SigmaSpace));
+				float rangeWeight = exp(-(rangeDist*rangeDist)/(2*_SigmaRange));
+
+				float weight = max(0, spaceWeight*rangeWeight);
+				//float weight = 1;
+				filterdDensity+= currDensity*weight;
+				normalization+=weight;
+			}
+		}
+	}
+	filterdDensity/=normalization;
+	_OutputTex[id] = filterdDensity;
+}
+
+[numthreads(8, 8, 8)]
+void Volume3DBilateralFilter(uint3 id : SV_DispatchThreadID)
+{
+	const int halfKernelSize = 4;
+	int3 dim;
+	_Data3DTex.GetDimensions(dim.x,dim.y,dim.z);
+
+	float3 density = _Data3DTex[id];
+	float3 filterdDensity = density;
+	float normalization = 1.0;
+
+	for(int x = -halfKernelSize;x<=halfKernelSize;x++){
+		for(int y = -halfKernelSize;y<=halfKernelSize;y++){
+			for(int z = -halfKernelSize;z<=halfKernelSize;z++){
+				int3 offset = int3(x,y,z);
+				int3 neighborPos = id+ offset;
+				if(any(neighborPos.xyz<0)||any(neighborPos.xyz>=dim.xyz)){
+					continue;
+				}
+				
+				float3 currDensity = _Data3DTex[neighborPos];
+				float spaceDist = length(offset);
+				float rangeDist = distance(currDensity,density);
+
+				float spaceWeight = exp(-(spaceDist*spaceDist)/(2*_SigmaSpace));
+				float rangeWeight = exp(-(rangeDist*rangeDist)/(2*_SigmaRange));
+
+				float weight = max(0, spaceWeight*rangeWeight);
+				filterdDensity+= currDensity*weight;
+				normalization+=weight;
+			}
+		}
+	}
+	filterdDensity/=normalization;
+	_Output3DTex[id] = filterdDensity;
+}
