@@ -135,7 +135,7 @@ namespace UnityVolumeRendering
                     // Convert back to linear scale, before setting updated value.
                     volrendObj.SetGradientLightingThreshold(new Vector2(gradLightThreshold.x * gradLightThreshold.x, gradLightThreshold.y * gradLightThreshold.y));
                 }
-                if (volrendObj.GetLightingEnabled())
+                if (volrendObj.GetLightingEnabled() || volrendObj.GetRenderMode() == RenderMode.IsosurfaceRendering)
                 {
                     volrendObj.SetDenoiseGradientEnabled(GUILayout.Toggle(volrendObj.GetDenoiseGradientEnabled(), "Enable volume gradient denoise"));
                     if (volrendObj.GetDenoiseGradientEnabled())
@@ -157,19 +157,11 @@ namespace UnityVolumeRendering
             {
                 if (volrendObj.GetRenderMode() == RenderMode.DirectVolumeRendering)
                 {
-                    // Back-to-front rendering option
-                    volrendObj.SetDVRBackwardEnabled(GUILayout.Toggle(volrendObj.GetDVRBackwardEnabled(), "Enable Back-to-Front Direct Volume Rendering"));
-
-                    // Early ray termination for Front-to-back DVR
-                    if (!volrendObj.GetDVRBackwardEnabled())
-                    {
-                        volrendObj.SetRayTerminationEnabled(GUILayout.Toggle(volrendObj.GetRayTerminationEnabled(), "Enable early ray termination"));
-                    }
-
+                    // Early ray termination
+                    volrendObj.SetRayTerminationEnabled(GUILayout.Toggle(volrendObj.GetRayTerminationEnabled(), "Enable early ray termination"));
                 }
+
                 volrendObj.SetCubicInterpolationEnabled(GUILayout.Toggle(volrendObj.GetCubicInterpolationEnabled(), "Enable cubic interpolation (better quality)"));
-                // Early ray termination
-                volrendObj.SetRayTerminationEnabled(GUILayout.Toggle(volrendObj.GetRayTerminationEnabled(), "Enable early ray termination"));
 
                 volrendObj.SetDenoiseEnabled(GUILayout.Toggle(volrendObj.GetDenoiseEnabled(), "Enable volume denoise"));
                 if (volrendObj.GetDenoiseEnabled())

@@ -344,7 +344,7 @@ namespace UnityVolumeRendering
                     }
                     else
                     {
-                        Texture3D texture =  await dataset.GetGradientTextureAsync(progressHandler) : null;
+                        Texture3D texture =  await dataset.GetGradientTextureAsync(progressHandler) ;
                         meshRenderer.sharedMaterial.SetTexture("_GradientTex", texture);
                     }
                 }
