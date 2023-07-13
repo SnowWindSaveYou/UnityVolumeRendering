@@ -162,6 +162,16 @@
                 float3 tmp = ray.startPos;
                 ray.startPos = ray.endPos;
                 ray.endPos = tmp;
+
+                // looking through inside
+                float3 cameraObjSpace =  mul(unity_WorldToObject, float4(_WorldSpaceCameraPos.xyz,1) );
+                float3 cameraVolumeSpace = cameraObjSpace+0.5f;
+                float3 cameraStartDir = ray.startPos-cameraVolumeSpace;
+                if( dot(cameraStartDir,ray.direction)<0){
+                    float w2oScale = length( mul(unity_WorldToObject, float4(1,0,0,0)));
+                    ray.startPos =cameraVolumeSpace+w2oScale*0.01*ray.direction ;
+                }
+
                 return ray;
             }
 
