@@ -22,7 +22,7 @@ namespace UnityVolumeRendering
             VectorUInt32 size = null;
             VectorDouble spacing = null;
 
-            VolumeDataset volumeDataset = new VolumeDataset();
+            VolumeDataset volumeDataset = ScriptableObject.CreateInstance<VolumeDataset>();
 
             ImportInternal(volumeDataset, pixelData, size, spacing, filePath);
 
@@ -35,19 +35,23 @@ namespace UnityVolumeRendering
             VectorDouble spacing = null;
 
             // Create dataset
-            VolumeDataset volumeDataset = new VolumeDataset();
+            VolumeDataset volumeDataset = ScriptableObject.CreateInstance<VolumeDataset>();
 
             await Task.Run(() => ImportInternal(volumeDataset,pixelData,size,spacing,filePath));
 
             return volumeDataset;
         }
-        private void ImportInternal(VolumeDataset volumeDataset, float[] pixelData,VectorUInt32 size,VectorDouble spacing,string filePath)
+
+        private void ImportInternal(VolumeDataset volumeDataset, float[] pixelData, VectorUInt32 size, VectorDouble spacing,string filePath)
         {
             ImageFileReader reader = new ImageFileReader();
 
             reader.SetFileName(filePath);
 
             Image image = reader.Execute();
+
+            // Convert to LPS coordinate system (may be needed for NRRD and other datasets)
+            SimpleITK.DICOMOrient(image, "LPS");
 
             // Cast to 32-bit float
             image = SimpleITK.Cast(image, PixelIDValueEnum.sitkFloat32);
@@ -62,18 +66,23 @@ namespace UnityVolumeRendering
             pixelData = new float[numPixels];
             IntPtr imgBuffer = image.GetBufferAsFloat();
             Marshal.Copy(imgBuffer, pixelData, 0, numPixels);
-            spacing = image.GetSpacing();
 
+            spacing = image.GetSpacing();
 
             volumeDataset.data = pixelData;
             volumeDataset.dimX = (int)size[0];
             volumeDataset.dimY = (int)size[1];
             volumeDataset.dimZ = (int)size[2];
-            volumeDataset.datasetName = "test";
+            volumeDataset.datasetName = Path.GetFileName(filePath);
             volumeDataset.filePath = filePath;
-            volumeDataset.scaleX = (float)(spacing[0] * size[0]);
-            volumeDataset.scaleY = (float)(spacing[1] * size[1]);
-            volumeDataset.scaleZ = (float)(spacing[2] * size[2]);
+            volumeDataset.scale = new Vector3(
+                (float)(spacing[0] * size[0]) / 1000.0f, // mm to m
+                (float)(spacing[1] * size[1]) / 1000.0f, // mm to m
+                (float)(spacing[2] * size[2]) / 1000.0f // mm to m
+            );
+
+            // Convert from LPS to Unity's coordinate system
+            ImporterUtilsInternal.ConvertLPSToUnityCoordinateSpace(volumeDataset);
 
             volumeDataset.FixDimensions();
         }

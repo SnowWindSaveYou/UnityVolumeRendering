@@ -5,6 +5,7 @@ using UnityEngine;
 
 namespace UnityVolumeRendering
 {
+    [Serializable]
     public enum DataContentFormat
     {
         Int8,
@@ -15,6 +16,7 @@ namespace UnityVolumeRendering
         Uint32
     }
 
+    [Serializable]
     public enum Endianness
     {
         LittleEndian,
@@ -63,7 +65,7 @@ namespace UnityVolumeRendering
                 return null;
             }
 
-            VolumeDataset dataset = new VolumeDataset();
+            VolumeDataset dataset = ScriptableObject.CreateInstance<VolumeDataset>();
             ImportInternal(dataset, reader, fs);
 
             return dataset;
@@ -93,10 +95,9 @@ namespace UnityVolumeRendering
                 fs.Close();
                 return null;
             }
-            VolumeDataset dataset = new VolumeDataset();
+            VolumeDataset dataset = ScriptableObject.CreateInstance<VolumeDataset>();
 
-
-            await Task.Run(() => ImportInternal(dataset,reader,fs));
+            await Task.Run(() => ImportInternal(dataset, reader, fs));
 
             return dataset;
         }
@@ -126,6 +127,7 @@ namespace UnityVolumeRendering
             fs.Close();
 
             dataset.FixDimensions();
+            dataset.rotation = Quaternion.Euler(90.0f, 0.0f, 0.0f);
         }
         private int ReadDataValue(BinaryReader reader)
         {

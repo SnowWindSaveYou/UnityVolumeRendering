@@ -11,7 +11,7 @@ namespace UnityVolumeRendering
     public class VolumeRendererEditorFunctions
     {
         [MenuItem("Volume Rendering/Load dataset/Load raw dataset")]
-        static void ShowDatasetImporter()
+        private static void ShowDatasetImporter()
         {
             string file = EditorUtility.OpenFilePanel("Select a dataset to load", "DataFiles", "");
             if (File.Exists(file))
@@ -20,7 +20,8 @@ namespace UnityVolumeRendering
                 if (wnd != null)
                     wnd.Close();
 
-                wnd = new RAWDatasetImporterEditorWindow(file);
+                wnd = EditorWindow.CreateInstance<RAWDatasetImporterEditorWindow>();
+                wnd.Initialise(file);
                 wnd.Show();
             }
             else
@@ -30,12 +31,18 @@ namespace UnityVolumeRendering
         }
 
         [MenuItem("Volume Rendering/Load dataset/Load DICOM")]
-        static void ShowDICOMImporter()
+        private static void ShowDICOMImporter()
         {
-            DicomImportAsync();
+            DicomImportAsync(true);
         }
 
-        static async void DicomImportAsync()
+        [MenuItem("Assets/Volume Rendering/Import dataset/Import DICOM")]
+        private static void ImportDICOMAsset()
+        {
+            DicomImportAsync(false);
+        }
+
+        private static async void DicomImportAsync(bool spawnInScene)
         {
             string dir = EditorUtility.OpenFolderPanel("Select a folder to load", "", "");
             if (Directory.Exists(dir))
@@ -43,8 +50,27 @@ namespace UnityVolumeRendering
                 Debug.Log("Async dataset load. Hold on.");
                 using (ProgressHandler progressHandler = new ProgressHandler(new EditorProgressView()))
                 {
-                    await DicomImportDirectoryAsync(dir, progressHandler);
-                    progressHandler.Finish();
+                    progressHandler.StartStage(0.7f, "Importing dataset");
+                    Task<VolumeDataset[]> importTask = DicomImportDirectoryAsync(dir, progressHandler);
+                    await importTask;
+                    progressHandler.EndStage();
+                    progressHandler.StartStage(0.3f, "Spawning dataset");
+                    for (int i = 0; i < importTask.Result.Length; i++)
+                    {
+                        if (spawnInScene)
+                        {
+                            VolumeDataset dataset = importTask.Result[i];
+                            VolumeRenderedObject obj = await VolumeObjectFactory.CreateObjectAsync(dataset);
+                            obj.transform.position = new Vector3(i, 0, 0);
+                        }
+                        else
+                        {
+                            VolumeDataset dataset = importTask.Result[i];
+                            ProjectWindowUtil.CreateAsset(dataset, $"{dataset.datasetName}.asset");
+                            AssetDatabase.SaveAssets();
+                        }
+                    }
+                    progressHandler.EndStage();
                 }
             }
             else
@@ -53,11 +79,11 @@ namespace UnityVolumeRendering
             }
         }
 
-        static async Task DicomImportDirectoryAsync(string dir, ProgressHandler progressHandler)
+        private static async Task<VolumeDataset[]> DicomImportDirectoryAsync(string dir, ProgressHandler progressHandler)
         {
             Debug.Log("Async dataset load. Hold on.");
-            progressHandler.Start("DICOM import", "Importing DICOM...");
 
+            List<VolumeDataset> importedDatasets = new List<VolumeDataset>();
             bool recursive = true;
 
             // Read all files
@@ -75,49 +101,49 @@ namespace UnityVolumeRendering
 
             if (fileCandidates.Any())
             {
-                progressHandler.StartStage(0.6f, "Loading DICOM series");
+                progressHandler.StartStage(0.2f, "Loading DICOM series");
 
                 IImageSequenceImporter importer = ImporterFactory.CreateImageSequenceImporter(ImageSequenceFormat.DICOM);
                 IEnumerable<IImageSequenceSeries> seriesList = await importer.LoadSeriesAsync(fileCandidates, new ImageSequenceImportSettings { progressHandler = progressHandler });
-                float numVolumesCreated = 0;
 
                 progressHandler.EndStage();
-                progressHandler.StartStage(0.4f);
+                progressHandler.StartStage(0.8f);
 
                 int seriesIndex = 0, numSeries = seriesList.Count();
                 foreach (IImageSequenceSeries series in seriesList)
                 {
-                    progressHandler.ReportProgress(seriesIndex, numSeries, $"Importing series {seriesIndex} of {numSeries}");
-                    progressHandler.StartStage(0.8f);
+                    progressHandler.StartStage(1.0f / numSeries, $"Importing series {seriesIndex + 1} of {numSeries}");
                     VolumeDataset dataset = await importer.ImportSeriesAsync(series, new ImageSequenceImportSettings { progressHandler = progressHandler });
-                    progressHandler.EndStage();
                     if (dataset != null)
                     {
-                        if (EditorPrefs.GetBool("DownscaleDatasetPrompt"))
-                        {
-                            if (EditorUtility.DisplayDialog("Optional DownScaling",
-                                $"Do you want to downscale the dataset? The dataset's dimension is: {dataset.dimX} x {dataset.dimY} x {dataset.dimZ}", "Yes", "No"))
-                            {
-                                Debug.Log("Async dataset downscale. Hold on.");
-                                await Task.Run(() => dataset.DownScaleData());
-                            }
-                        }
-
-                        VolumeRenderedObject obj = await VolumeObjectFactory.CreateObjectAsync(dataset);
-                        obj.transform.position = new Vector3(numVolumesCreated, 0, 0);
-                        numVolumesCreated++;
+                        await OptionallyDownscale(dataset);
+                        importedDatasets.Add(dataset);
                     }
                     seriesIndex++;
+                    progressHandler.EndStage();
                 }
 
                 progressHandler.EndStage();
             }
             else
                 Debug.LogError("Could not find any DICOM files to import.");
+
+            return importedDatasets.ToArray();
         }
 
         [MenuItem("Volume Rendering/Load dataset/Load NRRD dataset")]
-        static void ShowNRRDDatasetImporter()
+        private static void ShowNRRDDatasetImporter()
+        {
+            ImportNRRDDatasetAsync(true);
+        }
+
+        [MenuItem("Assets/Volume Rendering/Import dataset/Import NRRD")]
+        private static void ImportNRRDAsset()
+        {
+            ImportNRRDDatasetAsync(false);
+        }
+
+        private static async void ImportNRRDDatasetAsync(bool spawnInScene)
         {
             if (!SimpleITKManager.IsSITKEnabled())
             {
@@ -129,18 +155,12 @@ namespace UnityVolumeRendering
                 return;
             }
 
-            ImportNRRDDatasetAsync();
-        }
-
-        static async void ImportNRRDDatasetAsync()
-        {
             string file = EditorUtility.OpenFilePanel("Select a dataset to load (.nrrd)", "DataFiles", "");
             if (File.Exists(file))
             {
                 Debug.Log("Async dataset load. Hold on.");
-                using (ProgressHandler progressHandler = new ProgressHandler(new EditorProgressView()))
+                using (ProgressHandler progressHandler = new ProgressHandler(new EditorProgressView(), "NRRD import"))
                 {
-                    progressHandler.Start("NRRD import", "Importing NRRD...");
                     progressHandler.ReportProgress(0.0f, "Importing NRRD dataset");
 
                     IImageFileImporter importer = ImporterFactory.CreateImageFileImporter(ImageFileFormat.NRRD);
@@ -149,13 +169,21 @@ namespace UnityVolumeRendering
                     progressHandler.ReportProgress(0.8f, "Creating object");
                     if (dataset != null)
                     {
-                        VolumeRenderedObject obj = await VolumeObjectFactory.CreateObjectAsync(dataset);
+                        await OptionallyDownscale(dataset);
+                        if (spawnInScene)
+                        {
+                            await VolumeObjectFactory.CreateObjectAsync(dataset);
+                        }
+                        else    
+                        {
+                            ProjectWindowUtil.CreateAsset(dataset, $"{dataset.datasetName}.asset");
+                            AssetDatabase.SaveAssets();
+                        }
                     }
                     else
                     {
                         Debug.LogError("Failed to import datset");
                     }
-                    progressHandler.Finish();
                 }
             }
             else
@@ -165,20 +193,25 @@ namespace UnityVolumeRendering
         }
 
         [MenuItem("Volume Rendering/Load dataset/Load NIFTI dataset")]
-        static void ShowNIFTIDatasetImporter()
+        private static void ShowNIFTIDatasetImporter()
         {
-            ImportNIFTIDatasetAsync();
+            ImportNIFTIDatasetAsync(true);
         }
 
-        static async void ImportNIFTIDatasetAsync()
+        [MenuItem("Assets/Volume Rendering/Import dataset/Import NIFTI")]
+        private static void ImportNIFTIAsset()
+        {
+            ImportNIFTIDatasetAsync(false);
+        }
+
+        private static async void ImportNIFTIDatasetAsync(bool spawnInScene)
         {
             string file = EditorUtility.OpenFilePanel("Select a dataset to load (.nii)", "DataFiles", "");
             if (File.Exists(file))
             {
                 Debug.Log("Async dataset load. Hold on.");
-                using (ProgressHandler progressHandler = new ProgressHandler(new EditorProgressView()))
+                using (ProgressHandler progressHandler = new ProgressHandler(new EditorProgressView(), "NIFTI import"))
                 {
-                    progressHandler.Start("NIfTI import", "Importing NIfTI...");
                     progressHandler.ReportProgress(0.0f, "Importing NIfTI dataset");
 
                     IImageFileImporter importer = ImporterFactory.CreateImageFileImporter(ImageFileFormat.NIFTI);
@@ -188,13 +221,21 @@ namespace UnityVolumeRendering
 
                     if (dataset != null)
                     {
-                        VolumeRenderedObject obj = await VolumeObjectFactory.CreateObjectAsync(dataset);
+                        await OptionallyDownscale(dataset);
+                        if (spawnInScene)
+                        {
+                            await VolumeObjectFactory.CreateObjectAsync(dataset);
+                        }
+                        else    
+                        {
+                            ProjectWindowUtil.CreateAsset(dataset, $"{dataset.datasetName}.asset");
+                            AssetDatabase.SaveAssets();
+                        }
                     }
                     else
                     {
                         Debug.LogError("Failed to import datset");
                     }
-                    progressHandler.Finish();
                 }
             }
             else
@@ -204,20 +245,25 @@ namespace UnityVolumeRendering
         }
 
         [MenuItem("Volume Rendering/Load dataset/Load PARCHG dataset")]
-        static void ShowParDatasetImporter()
+        private static void ShowParDatasetImporter()
         {
-            ImportParDatasetAsync();
+            ImportParDatasetAsync(true);
         }
 
-        static async void ImportParDatasetAsync()
+        [MenuItem("Assets/Volume Rendering/Import dataset/Import PARCHG")]
+        private static void ImportParAsset()
+        {
+            ImportParDatasetAsync(false);
+        }
+
+        private static async void ImportParDatasetAsync(bool spawnInScene)
         {
             string file = EditorUtility.OpenFilePanel("Select a dataset to load", "DataFiles", "");
             if (File.Exists(file))
             {
                 Debug.Log("Async dataset load. Hold on.");
-                using (ProgressHandler progressHandler = new ProgressHandler(new EditorProgressView()))
+                using (ProgressHandler progressHandler = new ProgressHandler(new EditorProgressView(), "AVSP import"))
                 {
-                    progressHandler.Start("VASP import", "Importing VASP...");
                     progressHandler.ReportProgress(0.0f, "Importing VASP dataset");
 
                     IImageFileImporter importer = ImporterFactory.CreateImageFileImporter(ImageFileFormat.VASP);
@@ -227,13 +273,21 @@ namespace UnityVolumeRendering
 
                     if (dataset != null)
                     {
-                        VolumeRenderedObject obj = await VolumeObjectFactory.CreateObjectAsync(dataset);
+                        await OptionallyDownscale(dataset);
+                        if (spawnInScene)
+                        {
+                            await VolumeObjectFactory.CreateObjectAsync(dataset);
+                        }
+                        else    
+                        {
+                            ProjectWindowUtil.CreateAsset(dataset, $"{dataset.datasetName}.asset");
+                            AssetDatabase.SaveAssets();
+                        }
                     }
                     else
                     {
                         Debug.LogError("Failed to import datset");
                     }
-                    progressHandler.Finish();
                 }
             }
             else
@@ -243,12 +297,12 @@ namespace UnityVolumeRendering
         }
 
         [MenuItem("Volume Rendering/Load dataset/Load image sequence")]
-        static void ShowSequenceImporter()
+        private static void ShowSequenceImporter()
         {
             ImportSequenceAsync();
         }
 
-        static async void ImportSequenceAsync()
+        private static async void ImportSequenceAsync()
         {
             string dir = EditorUtility.OpenFolderPanel("Select a folder to load", "", "");
 
@@ -266,15 +320,7 @@ namespace UnityVolumeRendering
                     VolumeDataset dataset = await importer.ImportSeriesAsync(series);
                     if (dataset != null)
                     {
-                        if (EditorPrefs.GetBool("DownscaleDatasetPrompt"))
-                        {
-                            if (EditorUtility.DisplayDialog("Optional DownScaling",
-                                $"Do you want to downscale the dataset? The dataset's dimension is: {dataset.dimX} x {dataset.dimY} x {dataset.dimZ}", "Yes", "No"))
-                            {
-                                Debug.Log("Async dataset downscale. Hold on.");
-                                await Task.Run(()=>dataset.DownScaleData());
-                            }
-                        }
+                        await OptionallyDownscale(dataset);
                         await VolumeObjectFactory.CreateObjectAsync(dataset);
                     }
                 }
@@ -285,8 +331,21 @@ namespace UnityVolumeRendering
             }
         }
 
+        private static async Task OptionallyDownscale(VolumeDataset dataset)
+        {
+            if (EditorPrefs.GetBool("DownscaleDatasetPrompt"))
+            {
+                if (EditorUtility.DisplayDialog("Optional DownScaling",
+                    $"Do you want to downscale the dataset? The dataset's dimension is: {dataset.dimX} x {dataset.dimY} x {dataset.dimZ}", "Yes", "No"))
+                {
+                    Debug.Log("Async dataset downscale. Hold on.");
+                    await Task.Run(() => dataset.DownScaleData());
+                }
+            }
+        }
+
         [MenuItem("Volume Rendering/Cross section/Cross section plane")]
-        static void OnMenuItemClick()
+        private static void OnMenuItemClick()
         {
             VolumeRenderedObject[] objects = GameObject.FindObjectsOfType<VolumeRenderedObject>();
             if (objects.Length == 1)
@@ -299,14 +358,14 @@ namespace UnityVolumeRendering
         }
 
         [MenuItem("Volume Rendering/Cross section/Box cutout")]
-        static void SpawnCutoutBox()
+        private static void SpawnCutoutBox()
         {
             VolumeRenderedObject[] objects = GameObject.FindObjectsOfType<VolumeRenderedObject>();
             if (objects.Length == 1)
                 VolumeObjectFactory.SpawnCutoutBox(objects[0]);
         }
         [MenuItem("Volume Rendering/Cross section/Sphere cutout")]
-        static void SpawnCutoutSphere()
+        private static void SpawnCutoutSphere()
         {
             VolumeRenderedObject[] objects = GameObject.FindObjectsOfType<VolumeRenderedObject>();
             if (objects.Length == 1)
@@ -314,7 +373,7 @@ namespace UnityVolumeRendering
         }
 
         [MenuItem("Volume Rendering/1D Transfer Function")]
-        public static void Show1DTFWindow()
+        private static void Show1DTFWindow()
         {
             VolumeRenderedObject volRendObj = SelectionHelper.GetSelectedVolumeObject();
             if (volRendObj != null)
@@ -329,25 +388,25 @@ namespace UnityVolumeRendering
         }
 
         [MenuItem("Volume Rendering/2D Transfer Function")]
-        public static void Show2DTFWindow()
+        private static void Show2DTFWindow()
         {
             TransferFunction2DEditorWindow.ShowWindow();
         }
 
         [MenuItem("Volume Rendering/Slice renderer")]
-        static void ShowSliceRenderer()
+        private static void ShowSliceRenderer()
         {
             SliceRenderingEditorWindow.ShowWindow();
         }
 
         [MenuItem("Volume Rendering/Value range")]
-        static void ShowValueRangeWindow()
+        private static void ShowValueRangeWindow()
         {
             ValueRangeEditorWindow.ShowWindow();
         }
 
         [MenuItem("Volume Rendering/Settings")]
-        static void ShowSettingsWindow()
+        private static void ShowSettingsWindow()
         {
             ImportSettingsEditorWindow.ShowWindow();
         }

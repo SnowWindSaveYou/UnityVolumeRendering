@@ -98,7 +98,7 @@ namespace UnityVolumeRendering
             VectorString dicomNames = null;
 
             // Create dataset
-            VolumeDataset volumeDataset = new VolumeDataset();
+            VolumeDataset volumeDataset = ScriptableObject.CreateInstance<VolumeDataset>();
 
             ImageSequenceSeries sequenceSeries = (ImageSequenceSeries)series;
             if (sequenceSeries.files.Count == 0)
@@ -120,21 +120,22 @@ namespace UnityVolumeRendering
             VectorString dicomNames = null;
 
             // Create dataset
-            VolumeDataset volumeDataset = new VolumeDataset();
+            VolumeDataset volumeDataset = ScriptableObject.CreateInstance<VolumeDataset>();
 
             ImageSequenceSeries sequenceSeries = (ImageSequenceSeries)series;
             if (sequenceSeries.files.Count == 0)
             {
                 Debug.LogError("Empty series. No files to load.");
+                settings.progressHandler.Fail();
                 return null;
             }
 
-            await Task.Run(() => ImportSeriesInternal(dicomNames,sequenceSeries,image,size,pixelData,volumeDataset));
+            await Task.Run(() => ImportSeriesInternal(dicomNames, sequenceSeries, image, size, pixelData, volumeDataset));
 
             return volumeDataset;
         }
 
-        private void ImportSeriesInternal(VectorString dicomNames, ImageSequenceSeries sequenceSeries, Image image, VectorUInt32 size, float[] pixelData,VolumeDataset volumeDataset)
+        private void ImportSeriesInternal(VectorString dicomNames, ImageSequenceSeries sequenceSeries, Image image, VectorUInt32 size, float[] pixelData, VolumeDataset volumeDataset)
         {
             ImageSeriesReader reader = new ImageSeriesReader();
 
@@ -162,17 +163,23 @@ namespace UnityVolumeRendering
 
             for (int i = 0; i < pixelData.Length; i++)
                 pixelData[i] = Mathf.Clamp(pixelData[i], -1024, 3071);
+
             VectorDouble spacing = image.GetSpacing();
 
             volumeDataset.data = pixelData;
             volumeDataset.dimX = (int)size[0];
             volumeDataset.dimY = (int)size[1];
             volumeDataset.dimZ = (int)size[2];
-            volumeDataset.datasetName = "test";
+            volumeDataset.datasetName = Path.GetFileName(dicomNames[0]);
             volumeDataset.filePath = dicomNames[0];
-            volumeDataset.scaleX = (float)(spacing[0] * size[0]);
-            volumeDataset.scaleY = (float)(spacing[1] * size[1]);
-            volumeDataset.scaleZ = (float)(spacing[2] * size[2]);
+            volumeDataset.scale = new Vector3(
+                (float)(spacing[0] * size[0]) / 1000.0f, // mm to m
+                (float)(spacing[1] * size[1]) / 1000.0f, // mm to m
+                (float)(spacing[2] * size[2]) / 1000.0f // mm to m
+            );
+
+            // Convert from LPS to Unity's coordinate system
+            ImporterUtilsInternal.ConvertLPSToUnityCoordinateSpace(volumeDataset);
 
             volumeDataset.FixDimensions();
         }

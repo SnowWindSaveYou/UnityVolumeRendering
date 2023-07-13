@@ -8,6 +8,10 @@
         _TFTex("Transfer Function Texture (Generated)", 2D) = "" {}
         _MinVal("Min val", Range(0.0, 1.0)) = 0.0
         _MaxVal("Max val", Range(0.0, 1.0)) = 1.0
+        _MinGradient("Gradient visibility threshold", Range(0.0, 1.0)) = 0.0
+        _LightingGradientThresholdStart("Gradient threshold for lighting (end)", Range(0.0, 1.0)) = 0.0
+        _LightingGradientThresholdEnd("Gradient threshold for lighting (start)", Range(0.0, 1.0)) = 0.0
+        [HideInInspector] _TextureSize("Dataset dimensions", Vector) = (1, 1, 1)
     }
     SubShader
     {
@@ -26,7 +30,6 @@
             #pragma multi_compile __ CROSS_SECTION_ON
             #pragma multi_compile __ LIGHTING_ON
             #pragma multi_compile DEPTHWRITE_ON DEPTHWRITE_OFF
-            #pragma multi_compile __ DVR_BACKWARD_ON
             #pragma multi_compile __ RAY_TERMINATE_ON
             #pragma multi_compile __ USE_MAIN_LIGHT
             #pragma multi_compile __ CUBIC_INTERPOLATION_ON
@@ -72,6 +75,10 @@
             float _MinVal;
             float _MaxVal;
             float3 _TextureSize;
+
+            float _MinGradient;
+            float _LightingGradientThresholdStart;
+            float _LightingGradientThresholdEnd;
 
 #if CROSS_SECTION_ON
 #define CROSS_SECTION_TYPE_PLANE 1 
@@ -286,11 +293,7 @@
                 #define MAX_NUM_STEPS 512
                 #define OPACITY_THRESHOLD (1.0 - 1.0 / 255.0)
 
-#ifdef DVR_BACKWARD_ON
-                RayInfo ray = getRayBack2Front(i.vertexLocal);
-#else
                 RayInfo ray = getRayFront2Back(i.vertexLocal);
-#endif
                 RaymarchInfo raymarchInfo = initRaymarch(ray, MAX_NUM_STEPS);
 
                 float3 lightDir = normalize(ObjSpaceViewDir(float4(float3(0.0f, 0.0f, 0.0f), 0.0f)));
@@ -299,11 +302,7 @@
                 ray.startPos += (JITTER_FACTOR * ray.direction * raymarchInfo.stepSize) * tex2D(_NoiseTex, float2(i.uv.x, i.uv.y)).r;
 
                 float4 col = float4(0.0f, 0.0f, 0.0f, 0.0f);
-#ifdef DVR_BACKWARD_ON
-                float tDepth = 0.0f;
-#else
                 float tDepth = raymarchInfo.numStepsRecip * (raymarchInfo.numSteps - 1);
-#endif
                 for (int iStep = 0; iStep < raymarchInfo.numSteps; iStep++)
                 {
                     const float t = iStep * raymarchInfo.numStepsRecip;
@@ -321,43 +320,43 @@
                     // Apply visibility window
                     if (density < _MinVal || density > _MaxVal) continue;
 
+                    // Apply 1D transfer function
+#if !TF2D_ON
+                    float4 src = getTF1DColour(density);
+                    if (src.a == 0.0)
+                        continue;
+#endif
+
                     // Calculate gradient (needed for lighting and 2D transfer functions)
 #if defined(TF2D_ON) || defined(LIGHTING_ON)
                     float3 gradient = getGradient(currPos);
+                    float gradMag = length(gradient);
+                    float gradMagNorm = gradMag / 1.75f;
 #endif
 
-                    // Apply transfer function
+                    // Apply 2D transfer function
 #if TF2D_ON
-                    float mag = length(gradient) / 1.75f;
-                    float4 src = getTF2DColour(density, mag);
-#else
-                    float4 src = getTF1DColour(density);
+                    float4 src = getTF2DColour(density, gradMagNorm);
+                    if (src.a == 0.0)
+                        continue;
 #endif
 
                     // Apply lighting
-#if defined(LIGHTING_ON) && defined(DVR_BACKWARD_ON)
-                    src.rgb = calculateLighting(src.rgb, normalize(gradient), getLightDirection(ray.direction), ray.direction, 0.3f);
-#elif defined(LIGHTING_ON)
-                    src.rgb = calculateLighting(src.rgb, normalize(gradient), getLightDirection(-ray.direction), -ray.direction, 0.3f);
+#if defined(LIGHTING_ON)
+                    float factor = smoothstep(_LightingGradientThresholdStart, _LightingGradientThresholdEnd, gradMag);
+                    float3 shaded = calculateLighting(src.rgb, gradient / gradMag, getLightDirection(-ray.direction), -ray.direction, 0.3f);
+                    src.rgb = lerp(src.rgb, shaded, factor);
 #endif
 
-#ifdef DVR_BACKWARD_ON
-                    col.rgb = src.a * src.rgb + (1.0f - src.a) * col.rgb;
-                    col.a = src.a + (1.0f - src.a) * col.a;
-
-                    // Optimisation: A branchless version of: if (src.a > 0.15f) tDepth = t;
-                    tDepth = max(tDepth, t * step(0.15, src.a));
-#else
                     src.rgb *= src.a;
                     col = (1.0f - col.a) * src + col;
 
                     if (col.a > 0.15 && t < tDepth) {
                         tDepth = t;
                     }
-#endif
 
                     // Early ray termination
-#if !defined(DVR_BACKWARD_ON) && defined(RAY_TERMINATE_ON)
+#if defined(RAY_TERMINATE_ON)
                     if (col.a > OPACITY_THRESHOLD) {
                         break;
                     }
@@ -438,11 +437,16 @@
                     const float density = getDensity(currPos);
                     if (density > _MinVal && density < _MaxVal)
                     {
-                        float3 normal = normalize(getGradient(currPos));
-                        col = getTF1DColour(density);
-                        col.rgb = calculateLighting(col.rgb, normal, getLightDirection(-ray.direction), -ray.direction, 0.15);
-                        col.a = 1.0f;
-                        break;
+                        float3 gradient = getGradient(currPos);
+                        float gradMag = length(gradient);
+                        if (gradMag > _MinGradient)
+                        {
+                            float3 normal = gradient / gradMag;
+                            col = getTF1DColour(density);
+                            col.rgb = calculateLighting(col.rgb, normal, getLightDirection(-ray.direction), -ray.direction, 0.15);
+                            col.a = 1.0f;
+                            break;
+                        }
                     }
                 }
 

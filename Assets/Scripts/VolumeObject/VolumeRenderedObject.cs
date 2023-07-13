@@ -1,6 +1,5 @@
 ﻿using System.Threading;
 using System.Threading.Tasks;
-using UnityEditor;
 using UnityEngine;
 
 namespace UnityVolumeRendering
@@ -21,20 +20,37 @@ namespace UnityVolumeRendering
         public MeshRenderer meshRenderer;
 
         [SerializeField, HideInInspector]
+        public GameObject volumeContainerObject;
+
+        [SerializeField, HideInInspector]
         private RenderMode renderMode;
+
         [SerializeField, HideInInspector]
         private TFRenderMode tfRenderMode;
+
         [SerializeField, HideInInspector]
         private bool lightingEnabled;
+
         [SerializeField, HideInInspector]
         private LightSource lightSource;
 
+        // Minimum and maximum gradient threshold for lighting contribution. Values below min will be unlit, and between min and max will be partly shaded.
+        [SerializeField, HideInInspector]
+        private Vector2 gradientLightingThreshold = new Vector2(0.02f, 0.15f);
+
+        // Gradient magnitude threshold. Voxels with gradient magnitude less than this will not be rendered in isosurface rendering mode.
+        [SerializeField, HideInInspector]
+        private float minGradient = 0.01f;
+
+        // Minimum/maximum data value threshold for rendering. Values outside of this range will not be rendered.
         [SerializeField, HideInInspector]
         private Vector2 visibilityWindow = new Vector2(0.0f, 1.0f);
+
+        // Early ray termination
         [SerializeField, HideInInspector]
         private bool rayTerminationEnabled = true;
-        [SerializeField, HideInInspector]
-        private bool dvrBackward = false;
+
+        // Tri-cubic interpolation of data texture (expensive, but looks better)
         [SerializeField, HideInInspector]
         private bool cubicInterpolationEnabled = false;
 
@@ -48,7 +64,7 @@ namespace UnityVolumeRendering
         public SlicingPlane CreateSlicingPlane()
         {
             GameObject sliceRenderingPlane = GameObject.Instantiate(Resources.Load<GameObject>("SlicingPlane"));
-            sliceRenderingPlane.transform.parent = transform;
+            sliceRenderingPlane.transform.parent = this.volumeContainerObject.transform;
             sliceRenderingPlane.transform.localPosition = Vector3.zero;
             sliceRenderingPlane.transform.localRotation = Quaternion.identity;
             sliceRenderingPlane.transform.localScale = Vector3.one * 0.1f; // TODO: Change the plane mesh instead and use Vector3.one
@@ -67,22 +83,40 @@ namespace UnityVolumeRendering
 
         public void SetRenderMode(RenderMode mode)
         {
+            Task task = SetRenderModeAsync(mode);
+        }
+
+        public async Task SetRenderModeAsync(RenderMode mode, IProgressHandler progressHandler = null)
+        {
             if (renderMode != mode)
             {
                 renderMode = mode;
                 SetVisibilityWindow(0.0f, 1.0f); // reset visibility window
             }
-            UpdateMaterialProperties();
+            await UpdateMaterialPropertiesAsync(progressHandler);
         }
 
         public void SetTransferFunctionMode(TFRenderMode mode)
         {
+            Task task = SetTransferFunctionModeAsync(mode);
+        }
+
+        public async Task SetTransferFunctionModeAsync(TFRenderMode mode, IProgressHandler progressHandler = null)
+        {
+            if (progressHandler == null)
+                progressHandler = NullProgressHandler.instance;
+
+            progressHandler.StartStage(0.3f, "Generating transfer function texture");
             tfRenderMode = mode;
             if (tfRenderMode == TFRenderMode.TF1D && transferFunction != null)
                 transferFunction.GenerateTexture();
             else if (transferFunction2D != null)
                 transferFunction2D.GenerateTexture();
-            UpdateMaterialProperties();
+            progressHandler.EndStage();
+            
+            progressHandler.StartStage(0.7f, "Updating material properties");
+            await UpdateMaterialPropertiesAsync(progressHandler);
+            progressHandler.EndStage();
         }
 
         public TFRenderMode GetTransferFunctionMode()
@@ -123,10 +157,50 @@ namespace UnityVolumeRendering
             }
         }
 
+        public async Task SetLightingEnabledAsync(bool enable, IProgressHandler progressHandler = null)
+        {
+            if (enable != lightingEnabled)
+            {
+                lightingEnabled = enable;
+                await UpdateMaterialPropertiesAsync(progressHandler);
+            }
+        }
+
         public void SetLightSource(LightSource source)
         {
-            lightSource = source;
-            UpdateMaterialProperties();
+            if (lightSource != source)
+            {
+                lightSource = source;
+                UpdateMaterialProperties();
+            }
+        }
+
+        public void SetGradientLightingThreshold(Vector2 threshold)
+        {
+            if (gradientLightingThreshold != threshold)
+            {
+                gradientLightingThreshold = threshold;
+                UpdateMaterialProperties();
+            }
+        }
+
+        public Vector2 GetGradientLightingThreshold()
+        {
+            return gradientLightingThreshold;
+        }
+
+        public void SetGradientVisibilityThreshold(float min)
+        {
+            if (minGradient != min)
+            {
+                minGradient = min;
+                UpdateMaterialProperties();
+            }
+        }
+
+        public float GetGradientVisibilityThreshold()
+        {
+            return minGradient;
         }
 
         public void SetVisibilityWindow(float min, float max)
@@ -162,18 +236,16 @@ namespace UnityVolumeRendering
             }
         }
 
+        [System.Obsolete("Back-to-front rendering no longer supported")]
         public bool GetDVRBackwardEnabled()
         {
-            return dvrBackward;
+            return false;
         }
 
+        [System.Obsolete("Back-to-front rendering no longer supported")]
         public void SetDVRBackwardEnabled(bool enable)
         {
-            if (enable != dvrBackward)
-            {
-                dvrBackward = enable;
-                UpdateMaterialProperties();
-            }
+            Debug.LogWarning("Back-to-front rendering no longer supported");
         }
 
         public bool GetCubicInterpolationEnabled()
@@ -234,12 +306,28 @@ namespace UnityVolumeRendering
             UpdateMaterialProperties();
         }
 
-        private void UpdateMaterialProperties()
+        public async Task SetTransferFunctionAsync(TransferFunction tf, IProgressHandler progressHandler = null)
         {
-            UpdateMatAsync();
+            if (meshRenderer.sharedMaterial == null)
+            {
+                meshRenderer.sharedMaterial = new Material(Shader.Find("VolumeRendering/DirectVolumeRenderingShader"));
+                meshRenderer.sharedMaterial.SetTexture("_DataTex", dataset.GetDataTexture());
+            }
+            if (transferFunction == null)
+            {
+                transferFunction = TransferFunctionDatabase.CreateTransferFunction();
+            }
+
+            this.transferFunction = tf;
+            await UpdateMaterialPropertiesAsync(progressHandler);
         }
 
-        private async void UpdateMatAsync()
+        private void UpdateMaterialProperties(IProgressHandler progressHandler = null)
+        {
+            Task task = UpdateMaterialPropertiesAsync(progressHandler);
+        }
+
+        private async Task UpdateMaterialPropertiesAsync(IProgressHandler progressHandler = null)
         {
             await updateMatLock.WaitAsync();
 
@@ -256,7 +344,7 @@ namespace UnityVolumeRendering
                     }
                     else
                     {
-                        Texture3D texture =  await dataset.GetGradientTextureAsync() ;
+                        Texture3D texture =  await dataset.GetGradientTextureAsync(progressHandler) : null;
                         meshRenderer.sharedMaterial.SetTexture("_GradientTex", texture);
                     }
                 }
@@ -327,6 +415,9 @@ namespace UnityVolumeRendering
 
             meshRenderer.sharedMaterial.SetFloat("_MinVal", visibilityWindow.x);
             meshRenderer.sharedMaterial.SetFloat("_MaxVal", visibilityWindow.y);
+            meshRenderer.sharedMaterial.SetFloat("_MinGradient", minGradient);
+            meshRenderer.sharedMaterial.SetFloat("_LightingGradientThresholdStart", gradientLightingThreshold.x);
+            meshRenderer.sharedMaterial.SetFloat("_LightingGradientThresholdEnd", gradientLightingThreshold.y);
             meshRenderer.sharedMaterial.SetVector("_TextureSize", new Vector3(dataset.dimX, dataset.dimY, dataset.dimZ));
 
             if (rayTerminationEnabled)
@@ -334,20 +425,40 @@ namespace UnityVolumeRendering
             else
                 meshRenderer.sharedMaterial.DisableKeyword("RAY_TERMINATE_ON");
 
-            if (dvrBackward)
-                meshRenderer.sharedMaterial.EnableKeyword("DVR_BACKWARD_ON");
-            else
-                meshRenderer.sharedMaterial.DisableKeyword("DVR_BACKWARD_ON");
-
             if (cubicInterpolationEnabled)
                 meshRenderer.sharedMaterial.EnableKeyword("CUBIC_INTERPOLATION_ON");
             else
                 meshRenderer.sharedMaterial.DisableKeyword("CUBIC_INTERPOLATION_ON");
         }
 
+        private void Awake()
+        {
+            // TODO: Remove this after some time. This is to avoid breaking old serialised objects from before volumeContainerObject was added.
+            EnsureVolumeContainerRef();
+        }
+
         private void Start()
         {
             UpdateMaterialProperties();
+        }
+
+        public void OnValidate()
+        {
+            // TODO: Remove this after some time. This is to avoid breaking old serialised objects from before volumeContainerObject was added.
+            EnsureVolumeContainerRef();
+        }
+
+        private void EnsureVolumeContainerRef()
+        {
+            if (volumeContainerObject == null)
+            {
+                Debug.LogWarning("VolumeContainer missing. This is expected if the object was saved with an old version of the plugin. Please re-save it.");
+                Transform trans = this.transform.Find("VolumeContainer");
+                if (trans == null)
+                    trans = this.transform.GetComponentInChildren<MeshRenderer>(true)?.transform;
+                if (trans)
+                    volumeContainerObject = trans.gameObject;
+            }
         }
     }
 }
