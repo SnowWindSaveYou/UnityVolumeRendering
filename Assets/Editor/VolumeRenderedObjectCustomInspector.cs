@@ -16,6 +16,7 @@ namespace UnityVolumeRendering
         private float sigmaRangeGrad = 5;
         private float sigmaSpaceGrad = 0.5f;
 
+
         public override void OnInspectorGUI()
         {
             VolumeRenderedObject volrendObj = (VolumeRenderedObject)target;
@@ -68,6 +69,19 @@ namespace UnityVolumeRendering
                     if (newLightSource != oldLightSource)
                         volrendObj.SetLightSource(newLightSource);
                 }
+                if (volrendObj.GetLightingEnabled())
+                {
+                    volrendObj.SetDenoiseGradientEnabled(GUILayout.Toggle(volrendObj.GetDenoiseGradientEnabled(), "Enable volume gradient denoise"));
+                    if (volrendObj.GetDenoiseGradientEnabled())
+                    {
+                        sigmaRangeGrad = EditorGUILayout.Slider("Sigma range", sigmaRangeGrad, 0.01f, 500);
+                        sigmaSpaceGrad = EditorGUILayout.Slider("Sigma space", sigmaSpaceGrad, 0.01f, 10);
+                        if (GUILayout.Button("Update Denoise Gradient Param"))
+                        {
+                            volrendObj.UpdateDenoiseGradValue(sigmaSpaceGrad, sigmaRangeGrad);
+                        }
+                    }
+                }
             }
 
             // Other settings
@@ -85,29 +99,20 @@ namespace UnityVolumeRendering
                     {
                         volrendObj.SetRayTerminationEnabled(GUILayout.Toggle(volrendObj.GetRayTerminationEnabled(), "Enable early ray termination"));
                     }
-                    volrendObj.SetDenoiseEnabled(GUILayout.Toggle(volrendObj.GetDenoiseEnabled(), "Enable volume denoise"));
-                    if (volrendObj.GetDenoiseEnabled())
+
+                }
+                volrendObj.SetCubicInterpolationEnabled(GUILayout.Toggle(volrendObj.GetCubicInterpolationEnabled(), "Enable cubic interpolation (better quality)"));
+
+                volrendObj.SetDenoiseEnabled(GUILayout.Toggle(volrendObj.GetDenoiseEnabled(), "Enable volume denoise"));
+                if (volrendObj.GetDenoiseEnabled())
+                {
+                    sigmaRange = EditorGUILayout.Slider("Sigma range", sigmaRange, 0.01f, 500);
+                    sigmaSpace = EditorGUILayout.Slider("Sigma space", sigmaSpace, 0.01f, 10);
+                    if (GUILayout.Button("Update Denoise Param"))
                     {
-                        sigmaRange = EditorGUILayout.Slider(sigmaRange,0.01f,500);
-                        sigmaSpace = EditorGUILayout.Slider(sigmaSpace, 0.01f, 10);
-                        if(GUILayout.Button("Update Denoise Param"))
-                        {
-                            volrendObj.UpdateDenoiseValue(sigmaSpace, sigmaRange);
-                        }
-                    }
-                    volrendObj.SetDenoiseGradientEnabled(GUILayout.Toggle(volrendObj.GetDenoiseGradientEnabled(), "Enable volume gradient denoise"));
-                    if (volrendObj.GetDenoiseGradientEnabled())
-                    {
-                        sigmaRangeGrad = EditorGUILayout.Slider(sigmaRangeGrad, 0.01f, 500);
-                        sigmaSpaceGrad = EditorGUILayout.Slider(sigmaSpaceGrad, 0.01f, 10);
-                        if (GUILayout.Button("Update Denoise Gradient Param"))
-                        {
-                            volrendObj.UpdateDenoiseGradValue(sigmaSpaceGrad, sigmaRangeGrad);
-                        }
+                        volrendObj.UpdateDenoiseValue(sigmaSpace, sigmaRange);
                     }
                 }
-
-                volrendObj.SetCubicInterpolationEnabled(GUILayout.Toggle(volrendObj.GetCubicInterpolationEnabled(), "Enable cubic interpolation (better quality)"));
 
             }
         }
